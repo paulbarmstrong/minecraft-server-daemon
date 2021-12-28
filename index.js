@@ -3,6 +3,7 @@ const aws = require('aws-sdk')
 const cw = new aws.CloudWatch({apiVersion: "2010-08-01", region: "us-east-2"})
 const cwl = new aws.CloudWatchLogs({apiVersion: "2014-03-28", region: "us-east-2"})
 const CwLogger = require("./cw-logger.js")
+const { syncBuiltinESMExports } = require("module")
 const minecraftServerLogger = new CwLogger(cwl, "MinecraftServer", true)
 const minecraftServerDaemonLogger = new CwLogger(cwl, "MinecraftServerDaemon", true)
 
@@ -50,13 +51,22 @@ var minecraftServerProcess = spawnMinecraftServerProcess()
 const exitEvents = ["exit", "SIGINT", "SIGUSR1", "SIGUSR2", "uncaughtException", "SIGTERM"]
 exitEvents.forEach((eventType) => {
 	process.on(eventType, () => {
-		exiting = true
-		minecraftServerDaemonLogger.log("The daemon is exiting. Killing the minecraft server process")
-		if (minecraftServerProcess.exitCode == null) {
-			minecraftServerProcess.kill()
+		if (!exiting) {
+			exiting = true
+			minecraftServerDaemonLogger.log("The daemon is exiting. Killing the minecraft server process")
+			if (minecraftServerProcess.exitCode == null) {
+				minecraftServerProcess.kill()
+			}
+			minecraftServerDaemonLogger.log("Minecraft server process killed. Sending final logs to cloudwatch")
+			minecraftServerLogger.sendBatchToCw()
+			minecraftServerDaemonLogger.sendBatchToCw()
+			setTimeout(() => process.exit(1), 5000)
+			setInterval(() => {
+				if (minecraftServerLogger.getBatchSize() == 0 && minecraftServerLogger.getBatchSize() == 0) {
+					process.exit(0)
+				}
+			}, 100)
 		}
-		minecraftServerDaemonLogger.log("Minecraft server process killed. Exiting")
-		process.exit(0)
 	})
 })
 

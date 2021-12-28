@@ -18,6 +18,10 @@ class CwLogger {
 		}
 	}
 
+	getBatchSize = () => {
+		return this.logEventsQueue.size
+	}
+
 	sendBatchToCw = () => {
 		if (this.logEventsQueue.length > 0) {
 			const currentHour = new Date().toISOString().split(':')[0]
