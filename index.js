@@ -1,54 +1,92 @@
-const { spawn } = require("child_process")
+const { spawn, ChildProcess } = require("child_process")
 const aws = require('aws-sdk')
-const cw = new aws.CloudWatch({apiVersion: '2010-08-01', region: "us-east-2"})
+const cw = new aws.CloudWatch({apiVersion: "2010-08-01", region: "us-east-2"})
+const cwl = new aws.CloudWatchLogs({apiVersion: "2014-03-28", region: "us-east-2"})
+const CwLogger = require("./cw-logger.js")
+const minecraftServerLogger = new CwLogger(cwl, "MinecraftServer", true)
+const minecraftServerDaemonLogger = new CwLogger(cwl, "MinecraftServerDaemon", true)
 
-const minecraftServerProcess = spawn(
-	"java",
-	["-jar", "-Xmx3500M", "-Xms1024M", "/home/ec2-user/minecraft-server/forge-1.12.2-14.23.5.2846-universal.jar"],
-	{"cwd": "/home/ec2-user/minecraft-server/"}
-)
+var exiting = false
 
-process.on('SIGINT', () => {
-	console.log('Recieved SIGINT. Killing the minecraft server process')
-	minecraftServerProcess.kill()
-	console.log('Minecraft server process killed. Exiting')
-	process.exit(0)
+minecraftServerDaemonLogger.log("Minecraft server daemon has started")
+
+const spawnMinecraftServerProcess = () => {
+	
+	minecraftServerDaemonLogger.log("Spawning the minecraft server child process")
+
+	const childProcess = spawn(
+		"java",
+		["-jar", "-Xmx3500M", "-Xms1024M", "/home/ec2-user/minecraft-server/forge-1.12.2-14.23.5.2846-universal.jar"],
+		{"cwd": "/home/ec2-user/minecraft-server/"}
+	)
+
+	childProcess.stdout.on("data", data => {
+		const listCommandMatch = data.toString().match(/There are ([0-9]+)\/([0-9]+) players online/)
+		if (listCommandMatch != null) {
+			postPlayerCountCwMetric(parseInt(listCommandMatch[1]))
+		}
+		data.toString().split("\n").filter(str => str.length > 0).forEach(line => minecraftServerLogger.log(line))
+	})
+	
+	childProcess.stderr.on("data", data => {
+		data.toString().split("\n").filter(str => str.length > 0).forEach(line => minecraftServerLogger.log(line))
+	})
+	
+	childProcess.on('error', (error) => {
+		minecraftServerDaemonLogger.log(`Unable to spawn the minecraft server process: ${error.message}`)
+	})
+	
+	childProcess.on("close", code => {
+		minecraftServerDaemonLogger.log(`Minecraft server process exited with exit code ${code}`)
+		if (!exiting) {
+			minecraftServerProcess = spawnMinecraftServerProcess()
+		}
+	})
+	return childProcess
+}
+
+var minecraftServerProcess = spawnMinecraftServerProcess()
+
+const exitEvents = ["exit", "SIGINT", "SIGUSR1", "SIGUSR2", "uncaughtException", "SIGTERM"]
+exitEvents.forEach((eventType) => {
+	process.on(eventType, () => {
+		exiting = true
+		minecraftServerDaemonLogger.log("The daemon is exiting. Killing the minecraft server process")
+		if (minecraftServerProcess.exitCode == null) {
+			minecraftServerProcess.kill()
+		}
+		minecraftServerDaemonLogger.log("Minecraft server process killed. Exiting")
+		process.exit(0)
+	})
 })
 
-minecraftServerProcess.stdout.on("data", data => {
-	const listCommandMatch = data.toString().match(/There are ([0-9]+)\/([0-9]+) players online/)
-	if (listCommandMatch != null) {
-		cw.putMetricData({
-			MetricData: [
-				{
-				MetricName: "PlayerCount",
-				Dimensions: [],
-				Unit: "None",
-				Value: parseInt(listCommandMatch[1])
-				},
-			],
-			Namespace: "MinecraftServer"
-		}, (err, data) => {
-			if (err) {
-				console.error("Unable to post PlayerCount CloudWatch metric: " + err)
-			} else {
-				console.log("Posted PlayerCount CloudWatch metric: " + JSON.stringify(data))
-			}
-		})
+const playerCountCheckInterval = setInterval(() => {
+	if (minecraftServerProcess.exitCode == null) {
+		minecraftServerProcess.stdin.write("list\n")
 	}
-    console.log(`Minecraft server stdout: ${data}`);
-});
+}, 60 * 1000)
 
-minecraftServerProcess.stderr.on("data", data => {
-	console.log(`Minecraft server stderr: ${data}`);
-})
+const cwLoggerInterval = setInterval(() => {
+	minecraftServerLogger.sendBatchToCw()
+	minecraftServerDaemonLogger.sendBatchToCw()
+}, 1000)
 
-minecraftServerProcess.on('error', (error) => {
-    console.log(`Unable to spawn the minecraft server process: ${error.message}`);
-});
-
-minecraftServerProcess.on("close", code => {
-    console.log(`Minecraft server process exited with exit code ${code}`);
-});
-
-const interval = setInterval(() => minecraftServerProcess.stdin.write("list\n"), 60 * 1000)
+const postPlayerCountCwMetric = (numPlayers) => {
+	cw.putMetricData({
+		MetricData: [
+			{
+			MetricName: "PlayerCount",
+			Dimensions: [],
+			Unit: "None",
+			Value: parseInt(numPlayers)
+			},
+		],
+		Namespace: "MinecraftServer"
+	}, (err, data) => {
+		if (err) {
+			console.error("Unable to post PlayerCount CloudWatch metric: " + err)
+		} else {
+			minecraftServerDaemonLogger.log("Posted PlayerCount CloudWatch metric: " + JSON.stringify(data))
+		}
+	})
+}
