@@ -38,7 +38,7 @@ const spawnMinecraftServerProcess = () => {
 	})
 	
 	childProcess.on("close", code => {
-		minecraftServerDaemonLogger.log(`Minecraft server process exited with exit code ${code}`)
+		minecraftServerDaemonLogger.log(`Minecraft server process exited with exit code ${code}.`)
 		if (!exiting) {
 			minecraftServerProcess = spawnMinecraftServerProcess()
 		}
@@ -53,16 +53,17 @@ exitEvents.forEach((eventType) => {
 	process.on(eventType, () => {
 		if (!exiting) {
 			exiting = true
-			minecraftServerDaemonLogger.log("The daemon is exiting. Killing the minecraft server process")
+			const exitTimeoutSeconds = 20
+			setTimeout(() => process.exit(1), exitTimeoutSeconds * 1000)
+			minecraftServerDaemonLogger.log(`The daemon is exiting with an exit timeout of ${exitTimeoutSeconds} seconds.`)
+			minecraftServerDaemonLogger.log("Killing the minecraft server process and sending final logs to CloudWatch.")
 			if (minecraftServerProcess.exitCode == null) {
 				minecraftServerProcess.kill()
 			}
-			minecraftServerDaemonLogger.log("Minecraft server process killed. Sending final logs to cloudwatch")
 			minecraftServerLogger.sendBatchToCw()
 			minecraftServerDaemonLogger.sendBatchToCw()
-			setTimeout(() => process.exit(1), 5000)
 			setInterval(() => {
-				if (minecraftServerLogger.getBatchSize() == 0 && minecraftServerLogger.getBatchSize() == 0) {
+				if (minecraftServerProcess.exitCode != null && minecraftServerLogger.getBatchSize() == 0 && minecraftServerLogger.getBatchSize() == 0) {
 					process.exit(0)
 				}
 			}, 100)
