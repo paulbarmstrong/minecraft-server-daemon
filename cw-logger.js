@@ -1,8 +1,8 @@
 class CwLogger {
-	constructor(cwl, logGroupName, mirrorToConsole) {
+	constructor(cwl, logGroupName, explicitLogStreamName) {
 		this.cwl = cwl
 		this.logGroupName = logGroupName
-		this.mirrorToConsole = mirrorToConsole
+		this.explicitLogStreamName = explicitLogStreamName
 		this.logStreamName = null
 		this.cachedSequenceToken = undefined
 		this.logEventsQueue = []
@@ -13,28 +13,26 @@ class CwLogger {
 			message: data,
 			timestamp: Date.now()
 		})
-		if (this.mirrorToConsole) {
-			console.log(data)
-		}
+		console.log(data)
 	}
 
 	getBatchSize = () => {
-		return this.logEventsQueue.size
+		return this.logEventsQueue.length
 	}
 
 	sendBatchToCw = () => {
 		if (this.logEventsQueue.length > 0) {
-			const currentHour = new Date().toISOString().split(':')[0]
-			if (this.logStreamName !== currentHour) {
+			const expectedLogStreamName = this.explicitLogStreamName ? this.explicitLogStreamName : new Date().toISOString().split(':')[0]
+			if (this.logStreamName !== expectedLogStreamName) {
 				this.cachedSequenceToken = undefined
 				this.cwl.createLogStream({
 					logGroupName: this.logGroupName,
-					logStreamName: currentHour
+					logStreamName: expectedLogStreamName
 				}, (err, data) => {
 					if (err && err.code !== "ResourceAlreadyExistsException") {
 						console.error(err)
 					} else {
-						this.logStreamName = currentHour
+						this.logStreamName = expectedLogStreamName
 						this.sendBatchToCw()
 					}
 				})
@@ -64,6 +62,7 @@ class CwLogger {
 			}, (err, data) => {
 				if (err) {
 					console.error(err)
+					this.cachedSequenceToken = undefined
 					this.logEventsQueue = tempLogEventsQueue
 				} else {
 					this.cachedSequenceToken = data.nextSequenceToken
