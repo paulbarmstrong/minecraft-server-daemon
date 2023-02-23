@@ -3,9 +3,9 @@ const express = require("express")
 const aws = require('aws-sdk')
 const CwLogger = require("./cw-logger.js")
 
-const cw = new aws.CloudWatch({region: "us-east-2"})
-const cwl = new aws.CloudWatchLogs({region: "us-east-2"})
-const stepfunctions = new aws.StepFunctions({region: "us-east-2"})
+const cw = new aws.CloudWatch()
+const cwl = new aws.CloudWatchLogs()
+const stepfunctions = new aws.StepFunctions()
 const minecraftServerLogger = new CwLogger(cwl, "MinecraftServer", null)
 const minecraftServerDaemonLogger = new CwLogger(cwl, "MinecraftServerDaemon", null)
 const minecraftServerEventsLogger = new CwLogger(cwl, "MinecraftServerEvents", "Events")
@@ -98,7 +98,7 @@ const playerCountCheckInterval = setInterval(() => {
 	if (Date.now() - lastPlayerAt > 25 * 60 * 1000 && !["Shutdown", "ShuttingDown"].includes(minecraftServerProcessStatus)) {
 		minecraftServerDaemonLogger.log("Shutting down due to inactivity.")
 		stepfunctions.startExecution({
-			stateMachineArn: "arn:aws:states:us-east-2:333100284123:stateMachine:DeprovisionMinecraftServer"
+			stateMachineArn: "arn:aws:states:us-east-1:634329214694:stateMachine:DeprovisionMinecraftServer"
 		}, function(err, data) {
 			if (err) minecraftServerDaemonLogger.log("Unable to start execution: " + err)
 		})
